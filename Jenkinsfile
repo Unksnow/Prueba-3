@@ -56,7 +56,7 @@ pipeline {
         stage('Deploy Producción') {
             // >>> [GATE]: aquí va la condición "when" que protege producción
             steps {
-                sh 'bash scripts/deploy.sh produccion 5000'
+                sh 'bash scripts/deploy.sh produccion 5001'
                 script { env.PRODUCCION = env.APP_VERSION }
             }
         }
