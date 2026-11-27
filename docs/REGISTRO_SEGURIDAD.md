@@ -28,13 +28,15 @@ y un **commit** (usa el identificador `VULN-xx` en el mensaje del commit).
 
 ## 3. Resultados de OWASP ZAP
 
-| Alerta de ZAP | Riesgo | URL de ejemplo | VULN relacionada | Cómo se mitiga | ¿Mitigada? Build |
+| Alerta de ZAP | Riesgo | URL de ejemplo | VULN relacionada | Cómo se mitigó | ¿Mitigada? Build |
 |---|---|---|---|---|---|
-| Missing Anti-clickjacking Header | Medium | `http://localhost:5000/` | `VULN-06` | Cabecera `X-Frame-Options: DENY` y `CSP frame-ancestors` | Sí - #__ |
-| X-Content-Type-Options Header Missing | Low | `http://localhost:5000/alumnos` | `VULN-06` | Cabecera `X-Content-Type-Options: nosniff` en `@app.after_request` | Sí - #__ |
-| Content Security Policy (CSP) Header Not Set | Medium | `http://localhost:5000/` | `VULN-06` | Cabecera `Content-Security-Policy: default-src 'self'` | Sí - #__ |
-| Cross Site Scripting (Reflected) | High | `http://localhost:5000/hello?name=<script>...` | `VULN-02` | Sanitización de entrada con `escape(name)` | Sí - #__ |
-| SQL Injection | High | `http://localhost:5000/alumnos/buscar?nombre=' OR 1=1--` | `VULN-01` | Consulta parametrizada SQLite con marcadores `?` | Sí - #__ |
+| Missing Anti-clickjacking Header | Medium | `http://localhost:5000/` | `VULN-06` | Cabecera `X-Frame-Options: DENY` y `CSP frame-ancestors` | Sí - #11 |
+| X-Content-Type-Options Header Missing | Low | `http://localhost:5000/alumnos` | `VULN-06` | Cabecera `X-Content-Type-Options: nosniff` en `@app.after_request` | Sí - #11 |
+| Content Security Policy (CSP) Header Not Set | Medium | `http://localhost:5000/` | `VULN-06` | Cabecera `Content-Security-Policy: default-src 'self'` | Sí - #11 |
+| Cross Site Scripting (Reflected) | High | `http://localhost:5000/hello?name=<script>...` | `VULN-02` | Sanitización de entrada con `escape(name)` | Sí - #11 |
+| SQL Injection | High | `http://localhost:5000/alumnos/buscar?nombre=' OR 1=1--` | `VULN-01` | Consulta parametrizada SQLite con marcadores `?` | Sí - #11 |
+| Absence of Anti-CSRF Tokens | Medium | `http://jenkins:5001/` | Residual (DAST) | Hallazgo residual en formularios HTML; mitigación planificada con tokens CSRF (`Flask-WTF`) | No - #11 |
+| CSP: Failure to Define Directive with No Fallback | Medium | `http://jenkins:5001/` | `VULN-06` (Residual) | Cabecera CSP aplicada (`default-src 'self'`); pendiente añadir `frame-ancestors 'none'` y `form-action 'self'` | No - #11 |
 
 ## 4. Monitoreo e incidentes
 
