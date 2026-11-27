@@ -63,20 +63,20 @@ pipeline {
     }
 
         stage('DAST - OWASP ZAP') {
-                steps {
-                    sh '''
-                        mkdir -p zap-reports
-                        chmod 777 zap-reports
-                        echo "Iniciando escaneo automatizado de seguridad con OWASP ZAP..."
-                        docker run --rm --network host \
-                        -v "$(pwd)/zap-reports:/zap/wrk/:rw" \
-                        ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                        -t http://localhost:5000 \
-                        -r zap_report.html \
-                        -J zap_report.json || true
-                    '''
+            steps {
+                script {
+                    def status = sh(
+                        script: 'python3 scripts/zap_scan.py http://jenkins:5001/',
+                        returnStatus: true
+                    )
+                    if (status == 2) {
+                        unstable('ZAP encontró alertas High o Medium')
+                    } else if (status != 0) {
+                        error("Error al ejecutar OWASP ZAP (código ${status})")
+                    }
                 }
             }
+        }
 
     post {
         always {
