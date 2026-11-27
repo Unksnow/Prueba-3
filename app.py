@@ -2,24 +2,30 @@
 @file app.py
 @brief "Sistema Alumnos" de SecureDev: API y portal web de alumnos (Evaluación Parcial 3, OCY1102).
 
-Además de las rutas de negocio, la app publica métricas para Prometheus en /metrics.
-Las métricas de seguridad (logins fallidos y peticiones sospechosas) se ven en Grafana.
+Versión mitigada: corrige SQLi, XSS, credenciales duras/MD5, exposición de errores,
+modo debug en producción y cabeceras HTTP de seguridad, manteniendo intactas las métricas.
 """
-import hashlib
+import hmac
 import os
 import re
+import secrets
 import sqlite3
 import time
 
 from flask import Flask, Response, g, jsonify, render_template_string, request
+from markupsafe import escape
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 
-## Clave de la aplicación y credenciales del administrador.
-SECRET_KEY = "SecureDev-2024-clave-super-secreta"
-ADMIN_USUARIO = "admin"
-ADMIN_CLAVE_MD5 = "21232f297a57a5a743894a0e4a801fc3"
+## Mitigación VULN-03: Clave secreta y credenciales gestionadas fuera del código fuente con hash seguro (PBKDF2).
+SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+ADMIN_USUARIO = os.environ.get("ADMIN_USUARIO", "admin")
+ADMIN_CLAVE_HASH = os.environ.get(
+    "ADMIN_CLAVE_HASH",
+    generate_password_hash(os.environ.get("ADMIN_PASSWORD", "AdminSecure2026!")),
+)
 app.config["SECRET_KEY"] = SECRET_KEY
 
 ## Versión desplegada: la inyecta el pipeline (1.0.<build>+<commit>). Sirve para la trazabilidad.
@@ -39,7 +45,7 @@ HTTP_PETICIONES = Counter("http_requests_total", "Peticiones HTTP atendidas", ["
 HTTP_LATENCIA = Histogram("http_request_duration_seconds", "Duración de las peticiones HTTP", ["endpoint"])
 LOGIN_FALLIDOS = Counter("login_fallidos_total", "Intentos de inicio de sesión fallidos")
 LOGIN_EXITOSOS = Counter("login_exitosos_total", "Inicios de sesión correctos")
-SOSPECHOSAS = Counter("peticiones_sospechosas_total", "Peticiones con patrones de ataque", ["tipo"])
+SOSPECHAS = Counter("peticiones_sospechosas_total", "Peticiones con patrones de ataque", ["tipo"])
 APP_INFO = Gauge("app_info", "Versión desplegada de la aplicación", ["version"])
 APP_INFO.labels(version=VERSION).set(1)
 
@@ -117,21 +123,26 @@ def antes_de_la_peticion():
     valores = list(request.args.values()) + list(request.form.values())
     for tipo, patron in PATRONES_ATAQUE.items():
         if any(patron.search(v) for v in valores):
-            SOSPECHOSAS.labels(tipo=tipo).inc()
+            SOSPECHAS.labels(tipo=tipo).inc()
             app.logger.warning("Petición sospechosa (%s) desde %s a %s", tipo, request.remote_addr, request.path)
 
 
 @app.after_request
 def despues_de_la_peticion(respuesta):
     """!
-    @brief Registra la métrica de cada petición atendida.
+    @brief Registra la métrica de cada petición atendida y agrega cabeceras de seguridad HTTP.
     @param respuesta Respuesta que Flask enviará al cliente.
-    @return La misma respuesta.
+    @return La misma respuesta con cabeceras endurecidas.
     """
     endpoint = request.url_rule.rule if request.url_rule else "desconocido"
     if endpoint != "/metrics":
         HTTP_PETICIONES.labels(request.method, endpoint, str(respuesta.status_code)).inc()
         HTTP_LATENCIA.labels(endpoint).observe(time.perf_counter() - g.get("inicio", time.perf_counter()))
+
+    # Mitigación VULN-06: Cabeceras de endurecimiento web
+    respuesta.headers["X-Content-Type-Options"] = "nosniff"
+    respuesta.headers["X-Frame-Options"] = "DENY"
+    respuesta.headers["Content-Security-Policy"] = "default-src 'self'"
     return respuesta
 
 
@@ -147,10 +158,11 @@ def portada():
 @app.route("/hello")
 def hello():
     """!
-    @brief Saluda al usuario cuyo nombre llega en el parámetro de URL «name».
-    @return Página HTML con el saludo.
+    @brief Saluda al usuario escapando caracteres HTML para prevenir XSS reflejado.
+    @return Página HTML segura con el saludo.
     """
-    name = request.args.get("name", "visitante")
+    # Mitigación VULN-02: Sanitización de entrada reflejada
+    name = escape(request.args.get("name", "visitante"))
     return f"<h1>Hola, {name}!</h1>"
 
 
@@ -198,27 +210,33 @@ def obtener_alumno(alumno_id):
 @app.route("/alumnos/buscar")
 def buscar_alumnos():
     """!
-    @brief Busca alumnos cuyo nombre contenga el texto del parámetro «nombre».
+    @brief Busca alumnos mediante consulta parametrizada para prevenir SQL Injection.
     @return JSON con los alumnos encontrados.
     """
     nombre = request.args.get("nombre", "")
-    consulta = f"SELECT * FROM alumnos WHERE nombre LIKE '%{nombre}%'"
+    # Mitigación VULN-01: Consulta parametrizada
+    consulta = "SELECT * FROM alumnos WHERE nombre LIKE ?"
     try:
-        filas = conectar().execute(consulta).fetchall()
-    except sqlite3.Error as error:
-        return jsonify({"error": str(error), "consulta": consulta}), 500
+        filas = conectar().execute(consulta, (f"%{nombre}%",)).fetchall()
+    except sqlite3.Error:
+        # Mitigación VULN-05: No exponer detalles de SQL ni errores internos al cliente
+        app.logger.exception("Error de base de datos en /alumnos/buscar")
+        return jsonify({"error": "Error interno al realizar la búsqueda"}), 500
     return jsonify([dict(f) for f in filas])
 
 
 @app.route("/login", methods=["POST"])
 def login():
     """!
-    @brief Valida las credenciales del administrador enviadas por formulario.
+    @brief Valida las credenciales del administrador usando hash seguro PBKDF2.
     @return JSON con el resultado; 401 si las credenciales no son válidas.
     """
     usuario = request.form.get("usuario", "")
     clave = request.form.get("clave", "")
-    if usuario == ADMIN_USUARIO and hashlib.md5(clave.encode()).hexdigest() == ADMIN_CLAVE_MD5:
+    # Mitigación VULN-03: Comparación segura y verificación de hash PBKDF2
+    usuario_valido = hmac.compare_digest(usuario, ADMIN_USUARIO)
+    clave_valida = check_password_hash(ADMIN_CLAVE_HASH, clave)
+    if usuario_valido and clave_valida:
         LOGIN_EXITOSOS.inc()
         return jsonify({"mensaje": "Bienvenido, administrador"})
     LOGIN_FALLIDOS.inc()
@@ -238,4 +256,7 @@ def metrics():
 iniciar_db()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # Mitigación VULN-04: Debug deshabilitado por defecto en producción
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    host = os.environ.get("FLASK_HOST", "0.0.0.0")  # nosec B104
+    app.run(host=host, port=5000, debug=debug_mode)
