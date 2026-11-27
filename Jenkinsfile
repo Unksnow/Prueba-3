@@ -75,6 +75,14 @@ pipeline {
                 }
             }
         }
+        stage('Auditoría de Dependencias (Dependabot / pip-audit)') {
+            steps {
+                bat '''
+                    pip install pip-audit
+                    pip-audit -r requirements.txt || echo "Vulnerabilidades detectadas en dependencias: revisar PRs de Dependabot"
+                '''
+            }
+        }
     }
 
     post {
