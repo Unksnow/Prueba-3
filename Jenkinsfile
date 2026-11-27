@@ -62,6 +62,22 @@ pipeline {
         }
     }
 
+        stage('DAST - OWASP ZAP') {
+                steps {
+                    sh '''
+                        mkdir -p zap-reports
+                        chmod 777 zap-reports
+                        echo "Iniciando escaneo automatizado de seguridad con OWASP ZAP..."
+                        docker run --rm --network host \
+                        -v "$(pwd)/zap-reports:/zap/wrk/:rw" \
+                        ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                        -t http://localhost:5000 \
+                        -r zap_report.html \
+                        -J zap_report.json || true
+                    '''
+                }
+            }
+
     post {
         always {
             // Registro de trazabilidad: build <-> versión <-> commit <-> pruebas <-> hallazgos <-> despliegue
@@ -69,6 +85,10 @@ pipeline {
                 sh 'python3 scripts/trazabilidad.py'
             }
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+        }
+
+        always {
+            archiveArtifacts artifacts: 'zap-reports/*', allowEmptyArchive: true
         }
     }
 }
