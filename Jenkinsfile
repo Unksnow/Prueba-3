@@ -60,8 +60,6 @@ pipeline {
                 script { env.PRODUCCION = env.APP_VERSION }
             }
         }
-    }
-
         stage('DAST - OWASP ZAP') {
             steps {
                 script {
@@ -77,6 +75,7 @@ pipeline {
                 }
             }
         }
+    }
 
     post {
         always {
@@ -87,8 +86,6 @@ pipeline {
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
         }
 
-        always {
-            archiveArtifacts artifacts: 'zap-reports/*', allowEmptyArchive: true
-        }
+
     }
 }
